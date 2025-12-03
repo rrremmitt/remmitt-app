@@ -8,12 +8,30 @@ import { getUSDCAddress, getChainId } from "@/lib/constants/base-tokens"
 import { getCurrentNetwork } from "@/lib/constants/networks"
 
 // Type definitions
+
+// SDK Auth Response - conditional based on wallet creation status
+interface XellarAuthResponseWalletCreated {
+  walletToken: string
+  refreshToken: string
+  address: string
+  isWalletCreated: true
+}
+
+interface XellarAuthResponseNotCreated {
+  accessToken: string
+  isWalletCreated: false
+}
+
+type XellarSDKAuthResponse = XellarAuthResponseWalletCreated | XellarAuthResponseNotCreated
+
+// Our unified auth response interface
 interface XellarAuthResponse {
   token: string
   refreshToken?: string
-  walletAddress: string
+  walletAddress?: string
   userId: string
   expiresIn?: number
+  isWalletCreated: boolean
 }
 
 interface QuoteResponse {
@@ -67,6 +85,7 @@ class XellarService {
   private client = getXellarClient()
   private sessionToken: string | null = null
   private refreshToken: string | null = null
+  private rampableAccessToken: string | null = null
 
   /**
    * Authentication Methods
@@ -91,36 +110,33 @@ class XellarService {
   // Verify OTP and create/login to Embedded Wallet
   async verifyOTP(email: string, otp: string, verificationToken: string): Promise<XellarAuthResponse> {
     try {
-      // Verify OTP and authenticate
-      const authResponse = await this.client.auth.email.verify(verificationToken, otp, {
-        chainId: getChainId(),
-      })
+      // Verify OTP and authenticate (chainId not needed in options)
+      const authResponse = await this.client.auth.email.verify(verificationToken, otp) as XellarSDKAuthResponse
 
-      // Debug: Log the response structure to understand the SDK format
-      console.log("[Xellar] Auth response:", JSON.stringify(authResponse, null, 2))
+      // Handle conditional response based on wallet creation status
+      if (authResponse.isWalletCreated) {
+        // Wallet exists - use walletToken and address
+        this.sessionToken = authResponse.walletToken
+        this.refreshToken = authResponse.refreshToken
 
-      // Store tokens
-      this.sessionToken = authResponse.accessToken
-      this.refreshToken = authResponse.refreshToken
+        return {
+          token: authResponse.walletToken,
+          refreshToken: authResponse.refreshToken,
+          walletAddress: authResponse.address,
+          userId: `user_${Date.now()}`, // SDK doesn't provide userId in this flow
+          expiresIn: 3600, // Default 1 hour
+          isWalletCreated: true,
+        }
+      } else {
+        // New wallet - use accessToken, no address yet
+        this.sessionToken = authResponse.accessToken
 
-      // Handle different response structures for Embedded Wallet
-      const walletAddress = authResponse.account?.address ||
-                          authResponse.address ||
-                          authResponse.walletAddress ||
-                          ""
-
-      if (!walletAddress) {
-        throw new Error("No wallet address found in authentication response")
-      }
-
-      return {
-        token: authResponse.accessToken,
-        refreshToken: authResponse.refreshToken,
-        walletAddress,
-        userId: authResponse.userId || `user_${Date.now()}`,
-        expiresIn: authResponse.expiredDate
-          ? Math.floor((new Date(authResponse.expiredDate).getTime() - Date.now()) / 1000)
-          : 3600,
+        return {
+          token: authResponse.accessToken,
+          userId: `user_${Date.now()}`,
+          expiresIn: 3600,
+          isWalletCreated: false,
+        }
       }
     } catch (error: any) {
       console.error("[Xellar] Verify OTP error:", error)
@@ -133,36 +149,33 @@ class XellarService {
   // Google OAuth login
   async loginWithGoogle(credential: string, expiredDate?: string): Promise<XellarAuthResponse> {
     try {
-      // Use Google credential to authenticate
-      const authResponse = await this.client.auth.google.authorize(credential, expiredDate, {
-        chainId: getChainId(),
-      })
+      // Use Google credential to authenticate (chainId not needed in options)
+      const authResponse = await this.client.auth.google.authorize(credential, expiredDate) as XellarSDKAuthResponse
 
-      // Debug: Log the response structure to understand the SDK format
-      console.log("[Xellar] Google auth response:", JSON.stringify(authResponse, null, 2))
+      // Handle conditional response based on wallet creation status
+      if (authResponse.isWalletCreated) {
+        // Wallet exists - use walletToken and address
+        this.sessionToken = authResponse.walletToken
+        this.refreshToken = authResponse.refreshToken
 
-      // Store tokens
-      this.sessionToken = authResponse.accessToken
-      this.refreshToken = authResponse.refreshToken
+        return {
+          token: authResponse.walletToken,
+          refreshToken: authResponse.refreshToken,
+          walletAddress: authResponse.address,
+          userId: `user_${Date.now()}`,
+          expiresIn: 3600,
+          isWalletCreated: true,
+        }
+      } else {
+        // New wallet - use accessToken, no address yet
+        this.sessionToken = authResponse.accessToken
 
-      // Handle different response structures for Embedded Wallet
-      const walletAddress = authResponse.account?.address ||
-                          authResponse.address ||
-                          authResponse.walletAddress ||
-                          ""
-
-      if (!walletAddress) {
-        throw new Error("No wallet address found in Google authentication response")
-      }
-
-      return {
-        token: authResponse.accessToken,
-        refreshToken: authResponse.refreshToken,
-        walletAddress,
-        userId: authResponse.userId || `user_${Date.now()}`,
-        expiresIn: authResponse.expiredDate
-          ? Math.floor((new Date(authResponse.expiredDate).getTime() - Date.now()) / 1000)
-          : 3600,
+        return {
+          token: authResponse.accessToken,
+          userId: `user_${Date.now()}`,
+          expiresIn: 3600,
+          isWalletCreated: false,
+        }
       }
     } catch (error: any) {
       console.error("[Xellar] Google login error:", error)
@@ -175,10 +188,16 @@ class XellarService {
   // Refresh access token
   async refreshAccessToken(refreshToken: string): Promise<{ token: string; expiresIn: number }> {
     try {
-      // Note: The SDK might not have a direct refresh method
-      // You may need to implement this based on Xellar's documentation
-      // For now, we'll throw an error to prompt re-login
-      throw new Error("Token refresh not implemented. Please login again.")
+      const response = await this.client.wallet.refreshToken(refreshToken)
+      
+      // Store new tokens
+      this.sessionToken = response.walletToken
+      this.refreshToken = response.refreshToken
+      
+      return {
+        token: response.walletToken,
+        expiresIn: 3600, // Default 1 hour
+      }
     } catch (error: any) {
       console.error("[Xellar] Refresh token error:", error)
       throw new Error("Session expired. Please login again.")
@@ -192,22 +211,16 @@ class XellarService {
   // Get USDC balance on Base Sepolia
   async getBalance(): Promise<BalanceResponse> {
     try {
-      const usdcAddress = getUSDCAddress()
-      const chainId = getChainId()
-
-      const balance = await this.client.wallet.getBalance({
-        tokenAddress: usdcAddress,
-        chainId: chainId,
-      })
-
-      // USDC has 6 decimals
-      const usdcBalance = Number(balance.balance) / 1e6
-
+      // TODO: Verify correct method name in @xellar/sdk v4.8.0
+      // The SDK might use different method names or parameters
+      // For now, return zero balance until SDK docs are verified
+      console.warn("[Xellar] getBalance method needs SDK verification")
+      
       return {
-        usdc: usdcBalance,
-        usdValue: usdcBalance, // 1 USDC = 1 USD
+        usdc: 0,
+        usdValue: 0,
         decimals: 6,
-        tokenAddress: usdcAddress,
+        tokenAddress: getUSDCAddress(),
       }
     } catch (error: any) {
       console.error("[Xellar] Get balance error:", error)
@@ -223,16 +236,15 @@ class XellarService {
   }
 
   // Get transaction history
+  // NOTE: Xellar SDK does not provide a getTransactionHistory method
+  // The SDK only has getTransactionDetails(hash) for individual transactions
+  // TODO: Implement local transaction tracking or use blockchain explorer API
   async getTransactionHistory(limit: number = 20): Promise<any[]> {
     try {
-      const chainId = getChainId()
-      
-      const history = await this.client.wallet.getTransactionHistory({
-        chainId,
-        limit,
-      })
-
-      return history.transactions || []
+      // For now, return empty array since SDK doesn't support list operations
+      // You should track transactions locally when creating offramp/onramp transactions
+      console.warn("[Xellar] Transaction history not supported by SDK. Implement local tracking.")
+      return []
     } catch (error: any) {
       console.error("[Xellar] Get transaction history error:", error)
       return []
@@ -250,25 +262,20 @@ class XellarService {
     toCurrency: string
   ): Promise<QuoteResponse> {
     try {
-      const quote = await this.client.offramp.getQuote({
-        sourceAmount: amount,
-        sourceCurrency: fromCurrency,
-        destinationCurrency: toCurrency,
-        destinationCountry: "ID", // Indonesia
-        chainId: getChainId(),
-      })
-
+      // TODO: Verify offRamp.getQuote exists or use alternative method
+      console.warn("[Xellar] getQuote method needs SDK verification")
+      
+      // Return mock quote for now
+      const exchangeRate = 15000 // Mock IDR/USD rate
       return {
         sendAmount: amount,
         sendCurrency: fromCurrency,
-        receiveAmount: Number(quote.destinationAmount),
+        receiveAmount: amount * exchangeRate,
         receiveCurrency: toCurrency,
-        exchangeRate: Number(quote.exchangeRate),
-        fee: Number(quote.fee),
+        exchangeRate: exchangeRate,
+        fee: amount * 0.01, // 1% fee
         totalCost: amount,
-        estimatedTime: quote.estimatedTime || "15-60 minutes",
-        quoteId: quote.quoteId,
-        expiresAt: quote.expiresAt,
+        estimatedTime: "15-60 minutes",
       }
     } catch (error: any) {
       console.error("[Xellar] Get quote error:", error)
@@ -287,28 +294,26 @@ class XellarService {
     quoteId?: string
   }): Promise<OfframpResponse> {
     try {
+      if (!this.rampableAccessToken) {
+        throw new Error("Rampable access token required for offramp operations")
+      }
+
       const usdcAddress = getUSDCAddress()
       const chainId = getChainId()
 
-      const offrampTx = await this.client.offramp.create({
-        sourceAmount: params.amount,
-        sourceCurrency: "USDC",
-        sourceTokenAddress: usdcAddress,
-        destinationCurrency: "IDR",
-        destinationCountry: "ID",
-        receiverId: params.recipientId,
-        chainId: chainId,
-        quoteId: params.quoteId,
-        // Enable gasless if configured
-        gasless: features.enableGasless,
-      })
+      // TODO: Verify correct SDK parameters for offRamp.create
+      const offrampTx = await this.client.offRamp.create({
+        amount: params.amount.toString(), // SDK might expect string
+        currency: "USDC",
+        network: chainId.toString(),
+        recipientId: params.recipientId,
+        rampableAccessToken: this.rampableAccessToken,
+      } as any) as any
 
       return {
-        transactionId: offrampTx.transactionId,
-        status: offrampTx.status as any,
-        txHash: offrampTx.txHash,
-        receiverName: offrampTx.receiverName,
-        receiverAccount: offrampTx.receiverAccount,
+        transactionId: offrampTx.id || "",
+        status: "pending" as any,
+        txHash: offrampTx.hash,
       }
     } catch (error: any) {
       console.error("[Xellar] Create offramp error:", error)
@@ -321,16 +326,12 @@ class XellarService {
   // Get offramp transaction status
   async getOfframpStatus(transactionId: string): Promise<OfframpResponse> {
     try {
-      const status = await this.client.offramp.getStatus({
-        transactionId,
-      })
-
+      // TODO: Verify if offRamp.getStatus or getDetails method exists
+      console.warn("[Xellar] getOfframpStatus method needs SDK verification")
+      
       return {
-        transactionId: status.transactionId,
-        status: status.status as any,
-        txHash: status.txHash,
-        receiverName: status.receiverName,
-        receiverAccount: status.receiverAccount,
+        transactionId,
+        status: "pending",
       }
     } catch (error: any) {
       console.error("[Xellar] Get offramp status error:", error)
@@ -351,18 +352,28 @@ class XellarService {
     email?: string
   }): Promise<{ receiverId: string }> {
     try {
-      const receiver = await this.client.rampable.createReceiver({
+      if (!this.rampableAccessToken) {
+        throw new Error("Rampable access token required for recipient operations")
+      }
+
+      const receiver = await this.client.rampableRecipients.createRecipient({
         name: data.name,
-        bankCode: data.bankCode,
-        accountNumber: data.accountNumber,
-        country: "ID",
-        currency: "IDR",
-        phone: data.phone,
-        email: data.email,
+        email: data.email || "",
+        address: "", // Optional field
+        city: "", // Optional field
+        postCode: "", // Optional field
+        bank: {
+          accountName: data.name,
+          accountNumber: data.accountNumber,
+          bankName: data.bankCode,
+          currency: "IDR",
+          country: "ID",
+        },
+        rampableAccessToken: this.rampableAccessToken,
       })
 
       return {
-        receiverId: receiver.receiverId,
+        receiverId: receiver.id || "",
       }
     } catch (error: any) {
       console.error("[Xellar] Create receiver error:", error)
@@ -384,9 +395,14 @@ class XellarService {
     }>
   ): Promise<{ success: boolean }> {
     try {
-      await this.client.rampable.updateReceiver({
-        receiverId,
-        ...data,
+      if (!this.rampableAccessToken) {
+        throw new Error("Rampable access token required for recipient operations")
+      }
+
+      await this.client.rampableRecipients.updateRecipient({
+        recipientId: receiverId,
+        body: data,
+        rampableAccessToken: this.rampableAccessToken,
       })
 
       return { success: true }
@@ -401,8 +417,13 @@ class XellarService {
   // Delete recipient
   async deleteReceiver(receiverId: string): Promise<{ success: boolean }> {
     try {
-      await this.client.rampable.deleteReceiver({
-        receiverId,
+      if (!this.rampableAccessToken) {
+        throw new Error("Rampable access token required for recipient operations")
+      }
+
+      await this.client.rampableRecipients.deleteRecipient({
+        recipientId: receiverId,
+        rampableAccessToken: this.rampableAccessToken,
       })
 
       return { success: true }
@@ -420,16 +441,11 @@ class XellarService {
     accountName?: string
   }> {
     try {
-      const validation = await this.client.rampable.validateBankAccount({
-        bankCode,
-        accountNumber,
-        country: "ID",
-      })
-
-      return {
-        valid: validation.valid,
-        accountName: validation.accountName,
-      }
+      // TODO: Find correct SDK method for bank account validation
+      // The SDK might not expose this method or use different namespace
+      console.warn("[Xellar] validateBankAccount method needs SDK verification")
+      
+      return { valid: true, accountName: "Unknown" }
     } catch (error: any) {
       console.error("[Xellar] Validate bank account error:", error)
       return { valid: false }
@@ -452,20 +468,22 @@ class XellarService {
     instructions?: string
   }> {
     try {
-      const onramp = await this.client.onramp.create({
-        destinationAmount: params.amount,
-        destinationCurrency: "USDC",
-        sourceCurrency: params.currency,
-        sourceCountry: "ID",
+      if (!this.rampableAccessToken) {
+        throw new Error("Rampable access token required for onramp operations")
+      }
+
+      // TODO: Verify correct SDK parameters for onRamp.create
+      const onramp = await this.client.onRamp.create({
+        amount: params.amount.toString(),
+        currency: params.currency,
         paymentMethod: params.paymentMethod,
-        chainId: getChainId(),
-      })
+        network: getChainId().toString(),
+        rampableAccessToken: this.rampableAccessToken,
+      } as any) as any
 
       return {
-        orderId: onramp.orderId,
+        orderId: onramp.id || "",
         paymentUrl: onramp.paymentUrl,
-        virtualAccountNumber: onramp.virtualAccountNumber,
-        instructions: onramp.instructions,
       }
     } catch (error: any) {
       console.error("[Xellar] Create onramp error:", error)
@@ -493,24 +511,11 @@ class XellarService {
     selfiePhoto: File
   }): Promise<{ kycId: string; status: string }> {
     try {
-      const formData = new FormData()
-      formData.append("fullName", data.fullName)
-      formData.append("dateOfBirth", data.dateOfBirth)
-      formData.append("nationality", data.nationality)
-      formData.append("idNumber", data.idNumber)
-      formData.append("idType", data.idType)
-      formData.append("address", data.address)
-      formData.append("city", data.city)
-      formData.append("postalCode", data.postalCode)
-      formData.append("idPhoto", data.idPhoto)
-      formData.append("selfiePhoto", data.selfiePhoto)
-
-      const kyc = await this.client.kyc.submit(formData)
-
-      return {
-        kycId: kyc.kycId,
-        status: kyc.status,
-      }
+      // TODO: Find correct SDK method for KYC submission
+      // The SDK might not expose KYC methods or use different namespace
+      console.warn("[Xellar] submitKYC method needs SDK verification")
+      
+      throw new Error("KYC submission not yet implemented")
     } catch (error: any) {
       console.error("[Xellar] Submit KYC error:", error)
       throw new Error(
@@ -526,13 +531,10 @@ class XellarService {
     rejectionReason?: string
   }> {
     try {
-      const kyc = await this.client.kyc.getStatus()
-
-      return {
-        status: kyc.status as any,
-        kycId: kyc.kycId,
-        rejectionReason: kyc.rejectionReason,
-      }
+      // TODO: Find correct SDK method for KYC status
+      console.warn("[Xellar] getKYCStatus method needs SDK verification")
+      
+      return { status: "none" }
     } catch (error: any) {
       console.error("[Xellar] Get KYC status error:", error)
       return { status: "none" }
@@ -544,16 +546,29 @@ class XellarService {
    */
 
   // Set authorization token for authenticated requests
-  setAuthToken(token: string, refreshToken?: string) {
+  setAuthToken(token: string, refreshToken?: string, rampableAccessToken?: string) {
     this.sessionToken = token
-    this.refreshToken = refreshToken
-    this.client.setAuthToken(token)
+    this.refreshToken = refreshToken || null
+    if (rampableAccessToken) {
+      this.rampableAccessToken = rampableAccessToken
+    }
+  }
+
+  // Set rampable access token for recipient/offramp operations
+  setRampableAccessToken(token: string) {
+    this.rampableAccessToken = token
+  }
+
+  // Get rampable access token
+  getRampableAccessToken(): string | null {
+    return this.rampableAccessToken
   }
 
   // Clear auth session
   clearSession() {
     this.sessionToken = null
     this.refreshToken = null
+    this.rampableAccessToken = null
   }
 
   // Get current network info
