@@ -8,6 +8,7 @@ export interface User {
   name: string
   phone?: string
   walletAddress?: string
+  walletStatus?: "pending" | "created" | "failed"
   kycStatus: "none" | "pending" | "verified" | "rejected"
   createdAt: string
 }
@@ -87,8 +88,8 @@ export const useAuthStore = create<AuthState>()(
           otpEmail: null,
         })
 
-        // Set token in Xellar service
-        xellarService.setAuthToken(token, refreshToken)
+        // Set token in Xellar service with wallet address
+        xellarService.setAuthToken(token, refreshToken, undefined, user.walletAddress)
       },
 
       logout: () => {

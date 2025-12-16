@@ -32,6 +32,8 @@ interface XellarAuthResponse {
   userId: string
   expiresIn?: number
   isWalletCreated: boolean
+  rampableAccessToken?: string
+  walletStatus?: "pending" | "created" | "failed"
 }
 
 interface QuoteResponse {
@@ -62,6 +64,31 @@ interface BalanceResponse {
   tokenAddress: string
 }
 
+interface TokenInfo {
+  symbol: "USDC" | "USDT" | "IDRX"
+  name: string
+  address: string
+  decimals: number
+  icon?: string
+}
+
+interface TopUpCryptoResponse {
+  walletAddress: string
+  network: string
+  supportedTokens: TokenInfo[]
+  instructions: string[]
+}
+
+interface OnrampOrderResponse {
+  orderId: string
+  paymentUrl?: string
+  virtualAccountNumber?: string
+  qrCode?: string
+  instructions: string[]
+  expiresAt?: string
+  status: "pending" | "processing" | "completed" | "failed" | "expired"
+}
+
 // Indonesian banks - expanded list
 export const INDONESIAN_BANKS = [
   { code: "BCA", name: "Bank Central Asia (BCA)", type: "bank" },
@@ -86,6 +113,7 @@ class XellarService {
   private sessionToken: string | null = null
   private refreshToken: string | null = null
   private rampableAccessToken: string | null = null
+  private walletAddress: string | null = null
 
   /**
    * Authentication Methods
@@ -118,6 +146,7 @@ class XellarService {
         // Wallet exists - use walletToken and address
         this.sessionToken = authResponse.walletToken
         this.refreshToken = authResponse.refreshToken
+        this.walletAddress = authResponse.address
 
         return {
           token: authResponse.walletToken,
@@ -128,14 +157,34 @@ class XellarService {
           isWalletCreated: true,
         }
       } else {
-        // New wallet - use accessToken, no address yet
-        this.sessionToken = authResponse.accessToken
-
-        return {
-          token: authResponse.accessToken,
-          userId: `user_${Date.now()}`,
-          expiresIn: 3600,
-          isWalletCreated: false,
+        // New user - create wallet automatically
+        console.log("[Xellar] New user detected, creating wallet...")
+        
+        try {
+          const walletData = await this.createWallet(authResponse.accessToken)
+          
+          return {
+            token: walletData.walletToken,
+            refreshToken: walletData.refreshToken,
+            walletAddress: walletData.address,
+            userId: `user_${Date.now()}`,
+            expiresIn: 3600,
+            isWalletCreated: true,
+            rampableAccessToken: walletData.rampableAccessToken,
+          }
+        } catch (walletError: any) {
+          console.error("[Xellar] Auto wallet creation failed:", walletError)
+          
+          // Allow login but mark wallet as pending
+          this.sessionToken = authResponse.accessToken
+          
+          return {
+            token: authResponse.accessToken,
+            userId: `user_${Date.now()}`,
+            expiresIn: 3600,
+            isWalletCreated: false,
+            walletStatus: "pending",
+          }
         }
       }
     } catch (error: any) {
@@ -157,6 +206,7 @@ class XellarService {
         // Wallet exists - use walletToken and address
         this.sessionToken = authResponse.walletToken
         this.refreshToken = authResponse.refreshToken
+        this.walletAddress = authResponse.address
 
         return {
           token: authResponse.walletToken,
@@ -167,14 +217,34 @@ class XellarService {
           isWalletCreated: true,
         }
       } else {
-        // New wallet - use accessToken, no address yet
-        this.sessionToken = authResponse.accessToken
-
-        return {
-          token: authResponse.accessToken,
-          userId: `user_${Date.now()}`,
-          expiresIn: 3600,
-          isWalletCreated: false,
+        // New user - create wallet automatically
+        console.log("[Xellar] New user detected (Google), creating wallet...")
+        
+        try {
+          const walletData = await this.createWallet(authResponse.accessToken, expiredDate)
+          
+          return {
+            token: walletData.walletToken,
+            refreshToken: walletData.refreshToken,
+            walletAddress: walletData.address,
+            userId: `user_${Date.now()}`,
+            expiresIn: 3600,
+            isWalletCreated: true,
+            rampableAccessToken: walletData.rampableAccessToken,
+          }
+        } catch (walletError: any) {
+          console.error("[Xellar] Auto wallet creation failed:", walletError)
+          
+          // Allow login but mark wallet as pending
+          this.sessionToken = authResponse.accessToken
+          
+          return {
+            token: authResponse.accessToken,
+            userId: `user_${Date.now()}`,
+            expiresIn: 3600,
+            isWalletCreated: false,
+            walletStatus: "pending",
+          }
         }
       }
     } catch (error: any) {
@@ -201,6 +271,490 @@ class XellarService {
     } catch (error: any) {
       console.error("[Xellar] Refresh token error:", error)
       throw new Error("Session expired. Please login again.")
+    }
+  }
+
+  // Create wallet for new users (when isWalletCreated = false)
+  async createWallet(accessToken: string, expiredDate?: string): Promise<{
+    walletToken: string
+    refreshToken: string
+    address: string
+    rampableAccessToken?: string
+  }> {
+    try {
+      console.log("[Xellar] Creating new wallet for user...")
+      
+      const walletResponse = await this.client.account.wallet.create({
+        accessToken,
+        expiredDate,
+      })
+
+      // Store tokens
+      this.sessionToken = walletResponse.walletToken
+      this.refreshToken = walletResponse.refreshToken
+      if (walletResponse.rampableAccessToken) {
+        this.rampableAccessToken = walletResponse.rampableAccessToken
+      }
+
+      // Extract first address from array
+      const walletAddress = walletResponse.address && walletResponse.address.length > 0
+        ? walletResponse.address[0].address
+        : ""
+
+      // Store wallet address for future use
+      this.walletAddress = walletAddress
+
+      if (!walletAddress) {
+        throw new Error("Wallet created but no address returned")
+      }
+
+      console.log("[Xellar] Wallet created successfully:", walletAddress)
+
+      return {
+        walletToken: walletResponse.walletToken,
+        refreshToken: walletResponse.refreshToken,
+        address: walletAddress,
+        rampableAccessToken: walletResponse.rampableAccessToken,
+      }
+    } catch (error: any) {
+      console.error("[Xellar] Create wallet error:", error)
+      throw new Error(
+        error?.message || "Failed to create wallet. Please try again later."
+      )
+    }
+  }
+
+  // Retry wallet creation for users with pending wallet status
+  async retryCreateWallet(): Promise<{
+    success: boolean
+    walletAddress?: string
+    error?: string
+  }> {
+    try {
+      if (!this.sessionToken) {
+        throw new Error("No access token available. Please login again.")
+      }
+
+      const walletData = await this.createWallet(this.sessionToken)
+      
+      // Update stored tokens
+      this.sessionToken = walletData.walletToken
+      this.refreshToken = walletData.refreshToken
+      if (walletData.rampableAccessToken) {
+        this.rampableAccessToken = walletData.rampableAccessToken
+      }
+
+      return {
+        success: true,
+        walletAddress: walletData.address,
+      }
+    } catch (error: any) {
+      console.error("[Xellar] Retry create wallet error:", error)
+      return {
+        success: false,
+        error: error?.message || "Failed to create wallet",
+      }
+    }
+  }
+
+  // Get user's wallet address for receiving crypto deposits
+  async getWalletAddress(): Promise<{
+    address: string
+    network: string
+    chainId: number
+  }> {
+    try {
+      if (!this.sessionToken) {
+        throw new Error("Authentication required. Please login first.")
+      }
+
+      // If we have stored wallet address, return it immediately
+      if (this.walletAddress) {
+        console.log("[Xellar] Using stored wallet address:", this.walletAddress?.substring(0, 10) + "...")
+        return {
+          address: this.walletAddress,
+          network: getCurrentNetwork().displayName,
+          chainId: getChainId(),
+        }
+      }
+
+      // Try to create wallet if user doesn't have one yet
+      console.log("[Xellar] No stored address. Attempting to create/retrieve wallet...")
+      try {
+        const walletData = await this.createWallet(this.sessionToken)
+        
+        // Wallet created successfully, return the address
+        console.log("[Xellar] Wallet created/retrieved:", walletData.address?.substring(0, 10) + "...")
+        return {
+          address: walletData.address,
+          network: getCurrentNetwork().displayName,
+          chainId: getChainId(),
+        }
+      } catch (walletError: any) {
+        console.error("[Xellar] Auto wallet creation/retrieval failed:", walletError)
+        throw new Error("Unable to retrieve wallet address. Please log out and log in again.")
+      }
+    } catch (error: any) {
+      console.error("[Xellar] Get wallet address error:", error)
+      throw new Error(
+        error?.message || "Failed to retrieve wallet address. Please ensure your wallet is created."
+      )
+    }
+  }
+
+  /**
+   * Top-Up Operations
+   */
+
+  // Get supported tokens for deposits
+  private getSupportedTokens(): TokenInfo[] {
+    const usdcAddress = getUSDCAddress()
+    
+    return [
+      {
+        symbol: "USDC",
+        name: "USD Coin",
+        address: usdcAddress,
+        decimals: 6,
+        icon: "💵",
+      }
+      // {
+      //   symbol: "USDT",
+      //   name: "Tether USD",
+      //   address: usdcAddress, // TODO: Add actual USDT address for Base Sepolia
+      //   decimals: 6,
+      //   icon: "💲",
+      // },
+      // {
+      //   symbol: "IDRX",
+      //   name: "Indonesian Rupiah Token",
+      //   address: usdcAddress, // TODO: Add actual IDRX address for Base Sepolia
+      //   decimals: 2,
+      //   icon: "🇮🇩",
+      // },
+    ]
+  }
+
+  // Top up from external crypto wallet (supports USDC, USDT, IDRX)
+  async topUpFromCrypto(): Promise<TopUpCryptoResponse> {
+    try {
+      const walletInfo = await this.getWalletAddress()
+      const supportedTokens = this.getSupportedTokens()
+
+      return {
+        walletAddress: walletInfo.address,
+        network: walletInfo.network,
+        supportedTokens,
+        instructions: [
+          "Send tokens from any wallet (MetaMask, Coinbase, Trust Wallet, etc.)",
+          `Network: ${walletInfo.network} (Base Sepolia Testnet)`,
+          `Your Wallet Address: ${walletInfo.address}`,
+          "",
+          "✅ Supported Tokens:",
+          ...supportedTokens.map(token => 
+            `  ${token.icon} ${token.symbol} - ${token.name} (${token.address})`
+          ),
+          "",
+          "⏱️ Processing Time:",
+          "  • USDC: 1-2 minutes",
+          "  • USDT: 1-2 minutes",
+          "  • IDRX: 1-2 minutes",
+          "",
+          "⚠️ IMPORTANT:",
+          "  • Only send tokens on Base Sepolia network",
+          "  • Double-check the token contract address",
+          "  • Other tokens or networks will result in loss of funds",
+          "  • Minimum deposit: 1 USDC/USDT or 15,000 IDRX",
+        ],
+      }
+    } catch (error: any) {
+      console.error("[Xellar] Top up from crypto error:", error)
+      throw new Error(
+        error?.message || "Failed to get deposit instructions."
+      )
+    }
+  }
+
+  // Top up via onramp (buy crypto with IDR - Indonesian payment methods)
+  async topUpViaOnramp(params: {
+    amount: number
+    currency: string
+    token: "USDC" | "USDT" | "IDRX"
+    paymentMethod: "virtual_account" | "bank_transfer" | "ewallet" | "qris"
+    bankCode?: string
+  }): Promise<OnrampOrderResponse> {
+    try {
+      // TODO: This is a placeholder implementation
+      // Once Xellar SDK onramp is verified, update with actual SDK call
+      console.warn("[Xellar] topUpViaOnramp - Using placeholder implementation")
+      
+      if (!this.rampableAccessToken) {
+        throw new Error("Rampable access token required for onramp operations")
+      }
+
+      // Generate mock order ID for now
+      const orderId = `onramp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+      // Calculate crypto amount based on token
+      let exchangeRate: number
+      let tokenAmount: number
+      
+      switch (params.token) {
+        case "USDC":
+        case "USDT":
+          exchangeRate = 15750 // 1 USD = 15,750 IDR
+          tokenAmount = params.amount / exchangeRate
+          break
+        case "IDRX":
+          exchangeRate = 1 // 1 IDRX = 1 IDR
+          tokenAmount = params.amount
+          break
+        default:
+          throw new Error("Unsupported token")
+      }
+
+      const fee = params.amount * 0.015 // 1.5% fee
+
+      const instructions: string[] = [
+        `💰 Amount to pay: ${params.currency} ${params.amount.toLocaleString()}`,
+        `📥 You will receive: ${tokenAmount.toFixed(params.token === "IDRX" ? 0 : 2)} ${params.token}`,
+        `💵 Fee: ${params.currency} ${fee.toLocaleString()} (1.5%)`,
+        "",
+      ]
+
+      // Add payment method specific instructions
+      switch (params.paymentMethod) {
+        case "virtual_account":
+          instructions.push(
+            "📱 Virtual Account Payment:",
+            "1. Copy the virtual account number below",
+            "2. Open your mobile banking app",
+            "3. Select transfer to virtual account",
+            "4. Enter the VA number and amount",
+            "5. Complete payment within 24 hours",
+            "6. Tokens credited automatically after confirmation",
+            "",
+            `💳 VA Number: 8808${Math.random().toString().slice(2, 14)}`,
+            `🏦 Bank: ${params.bankCode || "Any Indonesian Bank"}`,
+            "⏱️ Processing: Instant - 5 minutes"
+          )
+          break
+        case "bank_transfer":
+          instructions.push(
+            "🏦 Bank Transfer:",
+            "1. Transfer to the account below",
+            "2. Include the unique code: " + Math.floor(100 + Math.random() * 900),
+            "3. Send proof of transfer (optional)",
+            "4. Processing time: 1-2 hours after confirmation",
+            "",
+            "📝 Bank Details:",
+            "  Account Name: Remmit Indonesia",
+            "  Bank: BCA",
+            "  Account: 1234567890"
+          )
+          break
+        case "ewallet":
+          instructions.push(
+            "📲 E-Wallet Payment:",
+            "1. Click the payment link below",
+            "2. You'll be redirected to your e-wallet app",
+            "3. Confirm payment in the app",
+            "4. Return to Remmit to see your balance",
+            "",
+            `💰 Wallet: ${params.bankCode || "DANA/OVO/GoPay/ShopeePay"}`,
+            "⏱️ Processing: Instant"
+          )
+          break
+        case "qris":
+          instructions.push(
+            "📷 QRIS Payment:",
+            "1. Open any banking app with QRIS",
+            "2. Scan the QR code below",
+            "3. Confirm the amount",
+            "4. Complete payment",
+            "",
+            "⏱️ Processing: Instant - 1 minute",
+            "💡 Works with: All Indonesian banking apps"
+          )
+          break
+      }
+
+      instructions.push(
+        "",
+        "⚡ After Payment:",
+        `  • ${params.token} will appear in your balance`,
+        "  • Check transaction history for status",
+        "  • Contact support if delayed > 1 hour"
+      )
+
+      // Return placeholder response
+      return {
+        orderId,
+        paymentUrl: `https://payment.example.com/order/${orderId}`,
+        virtualAccountNumber: params.paymentMethod === "virtual_account" 
+          ? `8808${Math.random().toString().slice(2, 14)}`
+          : undefined,
+        qrCode: params.paymentMethod === "qris"
+          ? `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==`
+          : undefined,
+        instructions,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        status: "pending",
+      }
+
+      /* TODO: Replace with actual SDK call once verified:
+      const onrampOrder = await this.client.onRamp.create({
+        amount: params.amount.toString(),
+        currency: params.currency,
+        token: params.token,
+        paymentMethod: params.paymentMethod,
+        network: getChainId().toString(),
+        bankCode: params.bankCode,
+        rampableAccessToken: this.rampableAccessToken,
+      })
+
+      return {
+        orderId: onrampOrder.id,
+        paymentUrl: onrampOrder.paymentUrl,
+        virtualAccountNumber: onrampOrder.virtualAccountNumber,
+        qrCode: onrampOrder.qrCode,
+        instructions: onrampOrder.instructions || [],
+        expiresAt: onrampOrder.expiresAt,
+        status: onrampOrder.status,
+      }
+      */
+    } catch (error: any) {
+      console.error("[Xellar] Top up via onramp error:", error)
+      throw new Error(
+        error?.message || "Failed to create payment. Please try again."
+      )
+    }
+  }
+
+  // Get onramp order status
+  async getOnrampStatus(orderId: string): Promise<{
+    orderId: string
+    status: "pending" | "processing" | "completed" | "failed" | "expired"
+    amount?: number
+    currency?: string
+    token?: string
+    tokenAmount?: number
+    transactionHash?: string
+    createdAt?: string
+    completedAt?: string
+    paymentMethod?: string
+  }> {
+    try {
+      // TODO: Replace with actual SDK call once verified
+      console.warn("[Xellar] getOnrampStatus - Using placeholder implementation")
+
+      // Return placeholder status
+      return {
+        orderId,
+        status: "pending",
+        amount: 150000,
+        currency: "IDR",
+        token: "USDC",
+        tokenAmount: 10,
+        createdAt: new Date().toISOString(),
+        paymentMethod: "virtual_account",
+      }
+
+      /* TODO: Replace with actual SDK call:
+      const order = await this.client.onRamp.getStatus({
+        orderId,
+        rampableAccessToken: this.rampableAccessToken,
+      })
+
+      return {
+        orderId: order.id,
+        status: order.status,
+        amount: order.amount,
+        currency: order.currency,
+        token: order.token,
+        tokenAmount: order.cryptoAmount,
+        transactionHash: order.txHash,
+        createdAt: order.createdAt,
+        completedAt: order.completedAt,
+        paymentMethod: order.paymentMethod,
+      }
+      */
+    } catch (error: any) {
+      console.error("[Xellar] Get onramp status error:", error)
+      throw new Error(
+        error?.message || "Failed to get payment status."
+      )
+    }
+  }
+
+  // List available payment methods for onramp
+  async getAvailablePaymentMethods(currency: string = "IDR"): Promise<{
+    methods: Array<{
+      type: "virtual_account" | "bank_transfer" | "ewallet" | "qris"
+      name: string
+      description: string
+      banks?: string[]
+      minAmount: number
+      maxAmount: number
+      processingTime: string
+      fee: string
+      supportedTokens: Array<"USDC" | "USDT" | "IDRX">
+    }>
+  }> {
+    try {
+      // Return Indonesian payment methods
+      return {
+        methods: [
+          {
+            type: "virtual_account",
+            name: "Virtual Account",
+            description: "Instant bank transfer via virtual account number",
+            banks: ["BCA", "BNI", "BRI", "Mandiri", "Permata", "CIMB"],
+            minAmount: 50000, // 50k IDR
+            maxAmount: 10000000, // 10M IDR
+            processingTime: "Instant - 5 minutes",
+            fee: "1.5%",
+            supportedTokens: ["USDC", "USDT", "IDRX"],
+          },
+          {
+            type: "ewallet",
+            name: "E-Wallet",
+            description: "Pay with popular Indonesian e-wallets",
+            banks: ["DANA", "OVO", "GoPay", "ShopeePay", "LinkAja"],
+            minAmount: 10000, // 10k IDR
+            maxAmount: 5000000, // 5M IDR
+            processingTime: "Instant",
+            fee: "1.8%",
+            supportedTokens: ["USDC", "USDT", "IDRX"],
+          },
+          {
+            type: "qris",
+            name: "QRIS",
+            description: "Scan QR code with any banking app",
+            minAmount: 10000, // 10k IDR
+            maxAmount: 2000000, // 2M IDR
+            processingTime: "Instant - 1 minute",
+            fee: "1.2%",
+            supportedTokens: ["USDC", "USDT", "IDRX"],
+          },
+          {
+            type: "bank_transfer",
+            name: "Bank Transfer",
+            description: "Manual bank transfer (any Indonesian bank)",
+            banks: ["All Indonesian Banks"],
+            minAmount: 100000, // 100k IDR
+            maxAmount: 50000000, // 50M IDR
+            processingTime: "1-2 hours",
+            fee: "1.0%",
+            supportedTokens: ["USDC", "USDT", "IDRX"],
+          },
+        ],
+      }
+    } catch (error: any) {
+      console.error("[Xellar] Get payment methods error:", error)
+      throw new Error(
+        error?.message || "Failed to get payment methods."
+      )
     }
   }
 
@@ -453,47 +1007,6 @@ class XellarService {
   }
 
   /**
-   * Onramp Operations (Buy USDC with IDR)
-   */
-
-  // Create onramp transaction (buy USDC with IDR via Indonesian payment methods)
-  async createOnramp(params: {
-    amount: number
-    currency: string
-    paymentMethod: "virtual_account" | "bank_transfer" | "ewallet"
-  }): Promise<{
-    orderId: string
-    paymentUrl?: string
-    virtualAccountNumber?: string
-    instructions?: string
-  }> {
-    try {
-      if (!this.rampableAccessToken) {
-        throw new Error("Rampable access token required for onramp operations")
-      }
-
-      // TODO: Verify correct SDK parameters for onRamp.create
-      const onramp = await this.client.onRamp.create({
-        amount: params.amount.toString(),
-        currency: params.currency,
-        paymentMethod: params.paymentMethod,
-        network: getChainId().toString(),
-        rampableAccessToken: this.rampableAccessToken,
-      } as any) as any
-
-      return {
-        orderId: onramp.id || "",
-        paymentUrl: onramp.paymentUrl,
-      }
-    } catch (error: any) {
-      console.error("[Xellar] Create onramp error:", error)
-      throw new Error(
-        error?.message || "Failed to create payment. Please try again."
-      )
-    }
-  }
-
-  /**
    * KYC Operations
    */
 
@@ -546,11 +1059,14 @@ class XellarService {
    */
 
   // Set authorization token for authenticated requests
-  setAuthToken(token: string, refreshToken?: string, rampableAccessToken?: string) {
+  setAuthToken(token: string, refreshToken?: string, rampableAccessToken?: string, walletAddress?: string) {
     this.sessionToken = token
     this.refreshToken = refreshToken || null
     if (rampableAccessToken) {
       this.rampableAccessToken = rampableAccessToken
+    }
+    if (walletAddress) {
+      this.walletAddress = walletAddress
     }
   }
 
@@ -569,6 +1085,7 @@ class XellarService {
     this.sessionToken = null
     this.refreshToken = null
     this.rampableAccessToken = null
+    this.walletAddress = null
   }
 
   // Get current network info

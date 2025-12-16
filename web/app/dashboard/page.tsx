@@ -111,7 +111,7 @@ export default function DashboardPage() {
 
       <div className="max-w-lg mx-auto px-4 py-6 space-y-6">
         {/* Balance Card */}
-        <BalanceCard balance={totalUsdBalance} onSend={() => router.push("/send")} onTopUp={() => {}} />
+        <BalanceCard balance={totalUsdBalance} onSend={() => router.push("/send")} onTopUp={() => router.push("/add-money")} />
 
         {/* Exchange Rate Banner */}
         <BrutalCard className="flex items-center justify-between p-3 bg-muted">

@@ -55,12 +55,18 @@ export function EmailLogin() {
     try {
       const response = await xellarService.verifyOTP(otpEmail!, otp, verificationToken)
 
+      // Set rampable access token if available
+      if (response.rampableAccessToken) {
+        xellarService.setRampableAccessToken(response.rampableAccessToken)
+      }
+
       login(
         {
           id: response.userId,
           email: otpEmail!,
           name: otpEmail!.split("@")[0],
           walletAddress: response.walletAddress,
+          walletStatus: response.walletStatus || "created",
           kycStatus: "none",
           createdAt: new Date().toISOString(),
         },
@@ -68,6 +74,11 @@ export function EmailLogin() {
         response.refreshToken,
         response.expiresIn,
       )
+
+      // Show warning if wallet is pending
+      if (response.walletStatus === "pending") {
+        console.warn("[Auth] Wallet creation pending. User can retry later.")
+      }
 
       router.push("/dashboard")
     } catch (err: any) {
