@@ -42,9 +42,9 @@ export default function ProfilePage() {
 
   const menuItems = [
     { icon: Bell, label: "Notifications", href: "/notifications" },
-    { icon: Lock, label: "Security", href: "#" },
-    { icon: HelpCircle, label: "Help Center", href: "#" },
-    { icon: FileText, label: "Terms & Privacy", href: "#" },
+    { icon: Lock, label: "Security", href: "/security" },
+    { icon: HelpCircle, label: "Help Center", href: "/help" },
+    { icon: FileText, label: "Terms & Privacy", href: "/terms" },
   ]
 
   return (
