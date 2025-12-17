@@ -41,7 +41,7 @@ export default function ProfilePage() {
   }
 
   const menuItems = [
-    { icon: Bell, label: "Notifications", href: "#" },
+    { icon: Bell, label: "Notifications", href: "/notifications" },
     { icon: Lock, label: "Security", href: "#" },
     { icon: HelpCircle, label: "Help Center", href: "#" },
     { icon: FileText, label: "Terms & Privacy", href: "#" },
@@ -83,14 +83,23 @@ export default function ProfilePage() {
                 </div>
               </div>
             </div>
-            {user.kycStatus === "none" && <BrutalButton size="sm">Verify Now</BrutalButton>}
+            {user.kycStatus === "none" && (
+              <BrutalButton size="sm" onClick={() => router.push("/profile/verify")}>
+                Verify Now
+              </BrutalButton>
+            )}
           </div>
         </BrutalCard>
 
         {/* Menu Items */}
         <div className="space-y-2">
           {menuItems.map((item) => (
-            <BrutalCard key={item.label} hover className="flex items-center justify-between p-3 cursor-pointer">
+            <BrutalCard 
+              key={item.label} 
+              hover 
+              className="flex items-center justify-between p-3 cursor-pointer"
+              onClick={() => item.href !== "#" && router.push(item.href)}
+            >
               <div className="flex items-center gap-3">
                 <item.icon className="w-5 h-5 text-muted-foreground" />
                 <span className="font-bold text-sm">{item.label}</span>

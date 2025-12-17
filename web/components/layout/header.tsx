@@ -28,7 +28,10 @@ export function Header({ title, showBack = false, showNotifications = true }: He
         </div>
 
         {showNotifications && (
-          <button className="w-10 h-10 border-2 border-foreground bg-card flex items-center justify-center brutal-shadow-sm brutal-hover relative">
+          <button 
+            onClick={() => router.push("/notifications")}
+            className="w-10 h-10 border-2 border-foreground bg-card flex items-center justify-center brutal-shadow-sm brutal-hover relative"
+          >
             <Bell className="w-5 h-5" />
             <span className="absolute -top-1 -right-1 w-3 h-3 bg-destructive border border-foreground" />
           </button>
