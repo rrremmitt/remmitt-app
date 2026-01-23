@@ -32,12 +32,14 @@ export default function ProfilePage() {
     none: "bg-destructive",
     pending: "bg-primary",
     verified: "bg-accent",
+    rejected: "bg-destructive",
   }
 
   const kycStatusLabels = {
     none: "Not Verified",
     pending: "Pending",
     verified: "Verified",
+    rejected: "Rejected",
   }
 
   const menuItems = [

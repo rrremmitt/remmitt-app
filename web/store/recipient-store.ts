@@ -13,6 +13,7 @@ export interface Recipient {
   accountType: "bank" | "ewallet"
   country: string
   currency: string
+  walletAddress?: `0x${string}` // Wallet address for blockchain transfers
   isFavorite: boolean
   lastUsed?: string
   createdAt: string
@@ -21,6 +22,8 @@ export interface Recipient {
 interface RecipientState {
   recipients: Recipient[]
   selectedRecipient: Recipient | null
+  selectedRecipients: Recipient[] // For batch transfers
+  isBatchMode: boolean
   isLoading: boolean
 
   // Actions
@@ -29,6 +32,10 @@ interface RecipientState {
   updateRecipient: (id: string, updates: Partial<Recipient>) => void
   deleteRecipient: (id: string) => void
   selectRecipient: (recipient: Recipient | null) => void
+  selectRecipients: (recipients: Recipient[]) => void
+  toggleRecipientSelection: (recipient: Recipient) => void
+  setBatchMode: (enabled: boolean) => void
+  clearBatchSelection: () => void
   toggleFavorite: (id: string) => void
   setLoading: (loading: boolean) => void
 }
@@ -38,6 +45,8 @@ export const useRecipientStore = create<RecipientState>()(
     (set) => ({
       recipients: [],
       selectedRecipient: null,
+      selectedRecipients: [],
+      isBatchMode: false,
       isLoading: false,
 
       setRecipients: (recipients) => set({ recipients }),
@@ -56,9 +65,37 @@ export const useRecipientStore = create<RecipientState>()(
         set((state) => ({
           recipients: state.recipients.filter((r) => r.id !== id),
           selectedRecipient: state.selectedRecipient?.id === id ? null : state.selectedRecipient,
+          selectedRecipients: state.selectedRecipients.filter((r) => r.id !== id),
         })),
 
       selectRecipient: (recipient) => set({ selectedRecipient: recipient }),
+
+      selectRecipients: (recipients) => set({ selectedRecipients: recipients }),
+
+      toggleRecipientSelection: (recipient) =>
+        set((state) => {
+          const isSelected = state.selectedRecipients.some((r) => r.id === recipient.id)
+          return {
+            selectedRecipients: isSelected
+              ? state.selectedRecipients.filter((r) => r.id !== recipient.id)
+              : [...state.selectedRecipients, recipient],
+          }
+        }),
+
+      setBatchMode: (enabled) =>
+        set((state) => ({
+          isBatchMode: enabled,
+          // Clear single selection when entering batch mode
+          selectedRecipient: enabled ? null : state.selectedRecipient,
+          // Clear batch selection when exiting batch mode
+          selectedRecipients: enabled ? state.selectedRecipients : [],
+        })),
+
+      clearBatchSelection: () =>
+        set({
+          selectedRecipients: [],
+          isBatchMode: false,
+        }),
 
       toggleFavorite: (id) =>
         set((state) => ({
