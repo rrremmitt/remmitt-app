@@ -123,10 +123,10 @@ flowchart TB
     K --> I
 ```
 
-### Activity Diagram
+### Sequence Diagram
 
 ```mermaid
-activityDiagram
+sequenceDiagram
     actor User
     participant App
     participant XellarSDK
@@ -189,62 +189,222 @@ flowchart TD
     W --> O
 ```
 
+### Activity Diagrams
+
+#### Send Money Flow
+
+```mermaid
+flowchart TD
+    Start([Start Send Money]) --> CheckAuth{User Authenticated?}
+    CheckAuth -->|No| Login[Redirect to Login]
+    Login --> CheckAuth
+
+    CheckAuth -->|Yes| SelectRecipient[Select Recipient]
+    SelectRecipient --> ChooseType{Single or Batch?}
+
+    ChooseType -->|Single| EnterAmount1[Enter Amount]
+    ChooseType -->|Batch| SelectMultiple[Select Multiple Recipients]
+    SelectMultiple --> EnterAmount2[Enter Amounts for Each]
+
+    EnterAmount1 --> GetQuote
+    EnterAmount2 --> GetQuote[Get Exchange Quote]
+
+    GetQuote --> CheckQuote{Quote Acceptable?}
+    CheckQuote -->|No| SelectRecipient
+    CheckQuote -->|Yes| CheckBalance{Sufficient Balance?}
+
+    CheckBalance -->|No| AddMoney[Redirect to Add Money]
+    AddMoney --> SelectRecipient
+
+    CheckBalance -->|Yes| Confirm[Review & Confirm Transaction]
+    Confirm --> Approve{User Approves?}
+
+    Approve -->|No| SelectRecipient
+    Approve -->|Yes| SignTx[Sign Transaction with Wallet]
+
+    SignTx --> Execute[Execute Smart Contract Call]
+    Execute --> CheckTx{Transaction Successful?}
+
+    CheckTx -->|No| ShowError[Show Error Message]
+    ShowError --> End([End])
+
+    CheckTx -->|Yes| InitiateOfframp[Initiate Offramp to Indonesian Bank]
+    InitiateOfframp --> SaveTx[Save Transaction to Database]
+    SaveTx --> ShowSuccess[Show Success & TX Hash]
+    ShowSuccess --> End
+
+    style Start fill:#90EE90
+    style End fill:#FFB6C1
+    style ShowSuccess fill:#90EE90
+    style ShowError fill:#FFB6C1
+```
+
+#### Add Money (Funding) Flow
+
+```mermaid
+flowchart TD
+    Start([Start Add Money]) --> CheckAuth{User Authenticated?}
+    CheckAuth -->|No| Login[Redirect to Login]
+    Login --> CheckAuth
+
+    CheckAuth -->|Yes| SelectMethod{Select Funding Method}
+
+    SelectMethod -->|Crypto Deposit| ShowAddress[Show Wallet Deposit Address]
+    ShowAddress --> CopyQR[Copy Address or Show QR Code]
+    CopyQR --> WaitForCrypto[Wait for Crypto Deposit]
+    WaitForCrypto --> DetectCrypto{Deposit Detected?}
+    DetectCrypto -->|Yes| CreditWallet1[Credit Wallet Balance]
+    DetectCrypto -->|No| WaitForCrypto
+
+    SelectMethod -->|Fiat Onramp| SelectPayment[Select Payment Method]
+    SelectPayment --> PaymentType{Payment Type}
+
+    PaymentType -->|Virtual Account| CreateVA[Create VA Payment]
+    PaymentType -->|Bank Transfer| CreateBank[Create Bank Transfer Order]
+    PaymentType -->|E-Wallet| SelectEwallet[Select E-Wallet Provider]
+    PaymentType -->|QRIS| GenerateQRIS[Generate QRIS Code]
+
+    SelectEwallet --> CreateEwallet[Create E-Wallet Order]
+
+    CreateVA --> ShowInstruction1[Show Payment Instructions]
+    CreateBank --> ShowInstruction2[Show Payment Instructions]
+    CreateEwallet --> ShowInstruction3[Show Payment Instructions]
+    GenerateQRIS --> ShowQRIS[Display QRIS QR Code]
+
+    ShowInstruction1 --> WaitForFiat[Wait for Payment Confirmation]
+    ShowInstruction2 --> WaitForFiat
+    ShowInstruction3 --> WaitForFiat
+    ShowQRIS --> ScanQRIS[User Scans QRIS]
+    ScanQRIS --> WaitForFiat
+
+    WaitForFiat --> CheckPayment{Payment Received?}
+    CheckPayment -->|No| CheckExpired{Order Expired?}
+    CheckExpired -->|Yes| ShowExpired[Show Expired Message]
+    CheckExpired -->|No| WaitForFiat
+    CheckExpired -->|Yes| End([End])
+    ShowExpired --> End
+
+    CheckPayment -->|Yes| ProcessOrder[Process Order]
+    ProcessOrder --> CreditWallet2[Credit Wallet with Crypto]
+    CreditWallet2 --> ShowSuccess1[Show Success Message]
+    ShowSuccess1 --> End
+
+    CreditWallet1 --> ShowSuccess2[Show Deposit Success]
+    ShowSuccess2 --> End
+
+    style Start fill:#90EE90
+    style End fill:#FFB6C1
+    style ShowSuccess1 fill:#90EE90
+    style ShowSuccess2 fill:#90EE90
+    style ShowExpired fill:#FFB6C1
+```
+
+#### KYC Verification Flow
+
+```mermaid
+flowchart TD
+    Start([Start KYC Verification]) --> CheckAuth{User Authenticated?}
+    CheckAuth -->|No| Login[Redirect to Login]
+    Login --> CheckAuth
+
+    CheckAuth -->|Yes| CheckKYC{KYC Already Verified?}
+    CheckKYC -->|Yes| ShowVerified[Show Already Verified]
+    ShowVerified --> End([End])
+
+    CheckKYC -->|No| StartKYC[Start KYC Process]
+    StartKYC --> EnterPersonal[Enter Personal Information]
+    EnterPersonal --> ValidatePersonal{Valid Personal Info?}
+
+    ValidatePersonal -->|No| ShowPersonalError[Show Validation Errors]
+    ShowPersonalError --> EnterPersonal
+
+    ValidatePersonal -->|Yes| UploadDoc[Upload ID Document]
+    UploadDoc --> CheckDoc{Document Valid?}
+
+    CheckDoc -->|No| ShowDocError[Show Document Error]
+    ShowDocError --> UploadDoc
+
+    CheckDoc -->|Yes| UploadSelfie[Upload Selfie with ID]
+    UploadSelfie --> CheckSelfie{Selfie Valid?}
+
+    CheckSelfie -->|No| ShowSelfieError[Show Selfie Error]
+    ShowSelfieError --> UploadSelfie
+
+    CheckSelfie -->|Yes| SubmitKYC[Submit KYC Application]
+    SubmitKYC --> ShowPending[Show Pending Status]
+
+    ShowPending --> WaitForReview[Wait for Provider Review]
+    WaitForReview --> CheckStatus{KYC Status Update}
+
+    CheckStatus -->|Approved| UpdateApproved[Update User Status]
+    CheckStatus -->|Rejected| ShowReject[Show Rejection Reason]
+    CheckStatus -->|Pending| WaitForReview
+
+    UpdateApproved --> ShowSuccess[Show Verification Success]
+    ShowSuccess --> GrantLimits[Grant Higher Limits]
+    GrantLimits --> End
+
+    ShowReject --> AllowRetry[Allow Retry After Period]
+    AllowRetry --> End
+
+    style Start fill:#90EE90
+    style End fill:#FFB6C1
+    style ShowSuccess fill:#90EE90
+    style ShowReject fill:#FFB6C1
+    style ShowVerified fill:#87CEEB
+```
+
 ### Use Case Diagram
 
 ```mermaid
-useCaseDiagram
-    actor User
-    actor Admin
+flowchart TB
+    %% Actors
+    User((User))
+    Admin((Admin))
 
-    package "Authentication" {
-        usecase UC1[Login with Email]
-        usecase UC2[Login with Google]
-        usecase UC3[Create Wallet]
-        usecase UC4[KYC Verification]
-    }
+    %% Authentication Package
+    subgraph Auth ["Authentication"]
+        UC1[Login with Email]
+        UC2[Login with Google]
+        UC3[Create Wallet]
+        UC4[KYC Verification]
+    end
 
-    package "Transfers" {
-        usecase UC5[Send Money - Single]
-        usecase UC6[Send Money - Batch]
-        usecase UC7[Get Exchange Quote]
-        usecase UC8[Track Transaction]
-    }
+    %% Transfers Package
+    subgraph Transfers ["Transfers"]
+        UC5[Send Money - Single]
+        UC6[Send Money - Batch]
+        UC7[Get Exchange Quote]
+        UC8[Track Transaction]
+    end
 
-    package "Funding" {
-        usecase UC9[Crypto Deposit]
-        usecase UC10[Buy Crypto - VA]
-        usecase UC11[Buy Crypto - Bank]
-        usecase UC12[Buy Crypto - E-Wallet]
-        usecase UC13[Buy Crypto - QRIS]
-    }
+    %% Funding Package
+    subgraph Funding ["Funding"]
+        UC9[Crypto Deposit]
+        UC10[Buy Crypto - VA]
+        UC11[Buy Crypto - Bank]
+        UC12[Buy Crypto - E-Wallet]
+        UC13[Buy Crypto - QRIS]
+    end
 
-    package "Management" {
-        usecase UC14[Manage Recipients]
-        usecase UC15[View History]
-        usecase UC16[View Profile]
-    }
+    %% Management Package
+    subgraph Management ["Management"]
+        UC14[Manage Recipients]
+        UC15[View History]
+        UC16[View Profile]
+    end
 
-    User --> UC1
-    User --> UC2
-    User --> UC3
-    User --> UC4
-    User --> UC5
-    User --> UC6
-    User --> UC7
-    User --> UC8
-    User --> UC9
-    User --> UC10
-    User --> UC11
-    User --> UC12
-    User --> UC13
-    User --> UC14
-    User --> UC15
-    User --> UC16
+    %% User relationships
+    User --> UC1 & UC2 & UC3 & UC4
+    User --> UC5 & UC6 & UC7 & UC8
+    User --> UC9 & UC10 & UC11 & UC12 & UC13
+    User --> UC14 & UC15 & UC16
 
-    UC3 --> UC5
-    UC3 --> UC6
-    UC5 --> UC7
-    UC6 --> UC7
+    %% Use case dependencies
+    UC3 -.-> UC5
+    UC3 -.-> UC6
+    UC5 -.-> UC7
+    UC6 -.-> UC7
 ```
 
 ## Smart Contracts
